@@ -23,7 +23,7 @@ No external software or installations needed — just open the link, connect you
 ## 📡 Data Format  
 The app sends data in this format: 
 
-<handCount>,<handType>,<fingerCount>
+`<handCount>, <handType>, <fingerCount>`
 
 | Field | Description | Example |
 |--------|--------------|----------|
@@ -32,6 +32,6 @@ The app sends data in this format:
 | `fingerCount` | Number of fingers up | `3` |
 
 **Example Message:**  
-## 1,L,3
+### 1,L,3
 
 ➡️ 1 hand detected, Left hand, 3 fingers up  
