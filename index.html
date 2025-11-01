@@ -97,6 +97,7 @@
       <div class="controls" aria-hidden="false">
         <button id="connectArduinoBtn" class="btn primary" title="Connect / Disconnect Arduino">Connect Arduino</button>
         <button id="connectMicrobitBtn" class="btn primary" title="Connect / Disconnect micro:bit">Connect micro:bit</button>
+        <div id="connStatus" class="status" role="status" aria-live="polite">Not connected</div>
         <div id="microbitStatus" class="status" role="status" aria-live="polite" style="display:none;margin-left:6px">micro:bit: Not connected</div>
       </div>
     </header>
@@ -146,6 +147,7 @@
   <script>
     const connectArduinoBtn = document.getElementById('connectArduinoBtn');
     const connectMicrobitBtn = document.getElementById('connectMicrobitBtn');
+    const connStatus = document.getElementById('connStatus');
     const microbitStatus = document.getElementById('microbitStatus');
     const canvas = document.getElementById('output');
     const videoEl = document.getElementById('inputVideo');
@@ -161,12 +163,15 @@
       if (serialConnected) {
         connectMicrobitBtn.style.display = 'none';
         microbitStatus.style.display = 'none';
+        connStatus.style.display = '';
       } else if (bleConnected) {
         connectArduinoBtn.style.display = 'none';
+        connStatus.style.display = 'none';
         microbitStatus.style.display = '';
       } else {
         connectMicrobitBtn.style.display = '';
         connectArduinoBtn.style.display = '';
+        connStatus.style.display = '';
         microbitStatus.style.display = 'none';
       }
     }
@@ -185,15 +190,18 @@
       }
       try {
         connectArduinoBtn.textContent = 'Requesting port...';
+        connStatus.textContent = 'Requesting port...';
         port = await navigator.serial.requestPort();
         await port.open({ baudRate: 115200 });
         writer = port.writable.getWriter();
         serialConnected = true;
+        connStatus.textContent = 'Connected';
         connectArduinoBtn.textContent = 'Disconnect';
         updateButtonsVisibility();
         readLoop().catch(()=>{});
       } catch (err) {
         serialConnected = false;
+        connStatus.textContent = 'Not connected';
         connectArduinoBtn.textContent = 'Connect Arduino';
         alert('Failed to open serial port.');
         console.error('Serial connect error', err);
@@ -203,9 +211,11 @@
 
     async function disconnectArduino(){
       connectArduinoBtn.textContent = 'Disconnecting...';
+      connStatus.textContent = 'Disconnecting...';
       try { if (writer) { await writer.close(); writer.releaseLock(); writer = null; } } catch(e) {}
       try { if (port) await port.close(); } catch(e) {}
       port = null; serialConnected = false;
+      connStatus.textContent = 'Not connected';
       connectArduinoBtn.textContent = 'Connect Arduino';
       updateButtonsVisibility();
     }
@@ -598,6 +608,20 @@
           updateButtonsVisibility();
         }
       }
+      if (serialConnected) {
+        connStatus.style.display = '';
+        connStatus.textContent = 'Connected to Arduino';
+        connectArduinoBtn.textContent = 'Disconnect';
+      } else {
+        if (!bleConnected) {
+          connStatus.style.display = '';
+          connStatus.textContent = 'Not connected';
+        } else {
+          connStatus.style.display = 'none';
+        }
+        connectArduinoBtn.textContent = 'Connect Arduino';
+      }
+      updateButtonsVisibility();
     }, 1500);
 
   </script>
