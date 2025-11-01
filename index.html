@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Hand Detection and Tracking - Arduino App</title>
+  <title>Hand Detection and Tracking - Arduino + micro:bit</title>
 
   <link rel="preconnect" href="https://cdn.jsdelivr.net" />
 
@@ -97,8 +97,15 @@
       </div>
 
       <div class="controls" aria-hidden="false">
-        <button id="connectBtn" class="btn primary" title="Connect / Disconnect Arduino">Connect Arduino</button>
+        <!-- Arduino connect button -->
+        <button id="connectArduinoBtn" class="btn primary" title="Connect / Disconnect Arduino">Connect Arduino</button>
+
+        <!-- micro:bit connect button -->
+        <button id="connectMicrobitBtn" class="btn" title="Connect / Disconnect micro:bit">Connect micro:bit</button>
+
+        <!-- Status fields -->
         <div id="connStatus" class="status" role="status" aria-live="polite">Not connected</div>
+        <div id="microbitStatus" class="status" role="status" aria-live="polite" style="display:none;margin-left:6px">micro:bit: Not connected</div>
       </div>
     </header>
 
@@ -131,22 +138,39 @@
       </div>
 
       <div class="card frame">
-        <div style="font-weight:800;margin-bottom:8px">Sent to Arduino</div>
+        <div style="font-weight:800;margin-bottom:8px">Sent to Device</div>
         <div id="lastPayload" class="mono">—</div>
       </div>
 
       <div class="card small">
         <div><strong>Notes:</strong></div>
         <ul style="margin:8px 0 0 16px;padding:0">
-          <li>Use Chrome/Edge for Web Serial support.</li>
+          <li>Use Chrome/Edge for Web Serial and Web Bluetooth support.</li>
         </ul>
       </div>
     </aside>
   </div>
 
   <script>
-    const connectBtn = document.getElementById('connectBtn');
+    /****************************************************************
+     * Combined script:
+     * - Original Arduino Hand Tracking (Web Serial)
+     * - micro:bit Bluetooth (Web Bluetooth - Nordic UART)
+     *
+     * Requirements implemented:
+     * - Both Connect Arduino and Connect micro:bit buttons
+     * - Toggle connect/disconnect on same button
+     * - If one device is connected, hide the other button
+     * - When disconnected both buttons reappear
+     * - Send payload to the connected device (serial or micro:bit)
+     * - Keep existing UI & features unchanged where possible
+     ****************************************************************/
+
+    // UI elements (hand-tracking for Arduino original)
+    const connectArduinoBtn = document.getElementById('connectArduinoBtn');
+    const connectMicrobitBtn = document.getElementById('connectMicrobitBtn');
     const connStatus = document.getElementById('connStatus');
+    const microbitStatus = document.getElementById('microbitStatus');
     const canvas = document.getElementById('output');
     const videoEl = document.getElementById('inputVideo');
     const handsCountEl = document.getElementById('handsCount');
@@ -158,10 +182,33 @@
     // Mirror preview for user (selfie). Set true to mirror — keeps visual UX familiar.
     const MIRROR_PREVIEW = true;
 
+    /*********************
+     * Shared utilities
+     *********************/
+    const encoder = new TextEncoder();
+
+    // small helper to hide/show the other device button when one connects
+    function updateButtonsVisibility() {
+      if (serialConnected) {
+        connectMicrobitBtn.style.display = 'none';
+        microbitStatus.style.display = 'none';
+      } else if (bleConnected) {
+        connectArduinoBtn.style.display = 'none';
+        connStatus.style.display = 'none';
+      } else {
+        connectMicrobitBtn.style.display = '';
+        connectArduinoBtn.style.display = '';
+        connStatus.style.display = '';
+        microbitStatus.style.display = 'none';
+      }
+    }
+
+    /************************
+     * Web Serial (Arduino)
+     ************************/
     let port = null;
     let writer = null;
     let serialConnected = false;
-    const encoder = new TextEncoder();
     let writeQueue = Promise.resolve();
     function queueOp(op){ writeQueue = writeQueue.then(op, op); return writeQueue; }
 
@@ -172,29 +219,35 @@
         return;
       }
       try {
-        connectBtn.textContent = 'Requesting port...';
+        connectArduinoBtn.textContent = 'Requesting port...';
         port = await navigator.serial.requestPort();
         await port.open({ baudRate: 115200 });
         writer = port.writable.getWriter();
         serialConnected = true;
         connStatus.textContent = 'Connected';
-        connectBtn.textContent = 'Disconnect';
+        connectArduinoBtn.textContent = 'Disconnect';
+        // hide micro:bit UI while serial connected
+        updateButtonsVisibility();
+        // start a read loop to consume incoming data (non-blocking)
         readLoop().catch(()=>{});
       } catch (err) {
         serialConnected = false;
         connStatus.textContent = 'Not connected';
-        connectBtn.textContent = 'Connect Arduino';
+        connectArduinoBtn.textContent = 'Connect Arduino';
         alert('Failed to open serial port.');
+        console.error('Serial connect error', err);
+        updateButtonsVisibility();
       }
     }
 
     async function disconnectArduino(){
-      connectBtn.textContent = 'Disconnecting...';
+      connectArduinoBtn.textContent = 'Disconnecting...';
       try { if (writer) { await writer.close(); writer.releaseLock(); writer = null; } } catch(e) {}
       try { if (port) await port.close(); } catch(e) {}
       port = null; serialConnected = false;
       connStatus.textContent = 'Not connected';
-      connectBtn.textContent = 'Connect Arduino';
+      connectArduinoBtn.textContent = 'Connect Arduino';
+      updateButtonsVisibility();
     }
 
     async function readLoop(){
@@ -204,19 +257,198 @@
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
+          // optionally process incoming serial data here
         }
-      } catch (e) {} finally { reader.releaseLock(); }
+      } catch (e) {} finally { try { reader.releaseLock(); } catch(e){} }
     }
 
     function sendSerialLine(line){
       if (!serialConnected || !writer) return;
       return queueOp(async () => {
-        try { await writer.write(encoder.encode(line + '\n')); } catch (e) {}
+        try { await writer.write(encoder.encode(line + '\n')); } catch (e) { console.warn('Serial write error', e); }
       });
     }
 
-    connectBtn.addEventListener('click', connectArduino);
+    connectArduinoBtn.addEventListener('click', connectArduino);
 
+    /************************
+     * Web Bluetooth (micro:bit - Nordic UART)
+     * Adapted from the micro:bit code provided. Renamed some vars to avoid collisions.
+     ************************/
+    const UART_SERVICE_UUID = '6e400001-b5a3-f393-e0a9-e50e24dcca9e';
+    const UART_NOTIFY_CHAR_UUID = '6e400002-b5a3-f393-e0a9-e50e24dcca9e';
+    const UART_WRITE_CHAR_UUID  = '6e400003-b5a3-f393-e0a9-e50e24dcca9e';
+
+    let bleDevice = null;
+    let bleServer = null;
+    let uartService = null;
+    let notifyChar = null;
+    let writeChar = null;
+    let bleConnected = false;
+    let bleWriteQueue = Promise.resolve();
+    const MAX_RECONNECT_ATTEMPTS = 8;
+    let reconnectAttempts = 0;
+
+    function queueGattOperation(op){ bleWriteQueue = bleWriteQueue.then(op, op); return bleWriteQueue; }
+    function safeLog(...args){ console.log('[BLE]', ...args); }
+
+    async function connectMicrobit(){
+      if (bleConnected) { await disconnectMicrobit(); return; }
+      if (!('bluetooth' in navigator)) {
+        alert('Web Bluetooth API not supported in this browser. Use Chrome/Edge on desktop or a supported mobile browser.');
+        return;
+      }
+      try {
+        microbitStatus.style.display = '';
+        microbitStatus.textContent = 'Requesting micro:bit...';
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ namePrefix: 'BBC micro:bit' }],
+          optionalServices: [UART_SERVICE_UUID]
+        });
+        if(!bleDevice) throw new Error('No device selected');
+        bleDevice.addEventListener('gattserverdisconnected', handleDisconnected);
+        microbitStatus.textContent = `Device: ${bleDevice.name || 'micro:bit'}`;
+
+        microbitStatus.textContent = 'Connecting...';
+        bleServer = await bleDevice.gatt.connect();
+
+        microbitStatus.textContent = 'Getting UART service...';
+        uartService = await bleServer.getPrimaryService(UART_SERVICE_UUID);
+
+        microbitStatus.textContent = 'Getting characteristics...';
+        writeChar = await uartService.getCharacteristic(UART_WRITE_CHAR_UUID).catch(()=>null);
+        notifyChar = await uartService.getCharacteristic(UART_NOTIFY_CHAR_UUID).catch(()=>null);
+        if(notifyChar && (notifyChar.properties.notify || notifyChar.properties.indicate)){
+          await notifyChar.startNotifications();
+          notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+        }
+
+        bleConnected = true;
+        reconnectAttempts = 0;
+        microbitStatus.textContent = `Connected: ${bleDevice.name || 'micro:bit'}`;
+        connectMicrobitBtn.textContent = 'Disconnect';
+        updateButtonsVisibility();
+      } catch (err) {
+        console.error('Connect failed', err);
+        microbitStatus.textContent = 'micro:bit: connection failed';
+        microbitStatus.style.color = '#ff6b6b';
+        bleDevice = null;
+        bleConnected = false;
+        connectMicrobitBtn.textContent = 'Connect micro:bit';
+        updateButtonsVisibility();
+      }
+    }
+
+    async function disconnectMicrobit(){
+      connectMicrobitBtn.textContent = 'Disconnecting...';
+      try { if (notifyChar && notifyChar.stopNotifications) await notifyChar.stopNotifications(); } catch(e){}
+      try { if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) bleDevice.gatt.disconnect(); } catch(e){}
+      bleDevice = null; bleServer = null; writeChar = null; notifyChar = null;
+      bleConnected = false;
+      connectMicrobitBtn.textContent = 'Connect micro:bit';
+      microbitStatus.textContent = 'micro:bit: Not connected';
+      microbitStatus.style.display = 'none';
+      updateButtonsVisibility();
+    }
+
+    function handleDisconnected(event){
+      const dev = event.target;
+      safeLog(`Device ${dev.name} disconnected`);
+      bleConnected = false;
+      microbitStatus.textContent = 'Disconnected — attempting reconnect...';
+      microbitStatus.style.color = '#ffcc66';
+      attemptReconnect();
+    }
+
+    function attemptReconnect(){
+      if(!bleDevice){ microbitStatus.textContent = 'Not connected'; connectMicrobitBtn.textContent = 'Connect micro:bit'; microbitStatus.style.display = 'none'; updateButtonsVisibility(); return; }
+      reconnectAttempts++;
+      if(reconnectAttempts > MAX_RECONNECT_ATTEMPTS){
+        microbitStatus.textContent = 'Reconnect failed — click Connect';
+        connectMicrobitBtn.textContent = 'Connect micro:bit';
+        microbitStatus.style.color = '#ff6b6b';
+        bleDevice = null;
+        bleConnected = false;
+        updateButtonsVisibility();
+        return;
+      }
+      const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttempts-1), 20000);
+      safeLog('Reconnect attempt', reconnectAttempts, 'next in ms', backoffMs);
+      setTimeout(async () => {
+        try {
+          microbitStatus.textContent = `Reconnect attempt ${reconnectAttempts}...`;
+          bleServer = await bleDevice.gatt.connect();
+          uartService = await bleServer.getPrimaryService(UART_SERVICE_UUID);
+          writeChar = await uartService.getCharacteristic(UART_WRITE_CHAR_UUID).catch(()=>null);
+          notifyChar = await uartService.getCharacteristic(UART_NOTIFY_CHAR_UUID).catch(()=>null);
+          if(notifyChar && (notifyChar.properties.notify || notifyChar.properties.indicate)){
+            await notifyChar.startNotifications();
+            notifyChar.addEventListener('characteristicvaluechanged', onNotify);
+          }
+          bleConnected = true;
+          reconnectAttempts = 0;
+          microbitStatus.textContent = `Reconnected: ${bleDevice.name || 'micro:bit'}`;
+          connectMicrobitBtn.textContent = 'Disconnect';
+          updateButtonsVisibility();
+        } catch(e){
+          console.warn('Reconnect attempt failed', e);
+          attemptReconnect();
+        }
+      }, backoffMs);
+    }
+
+    function onNotify(ev){
+      const value = ev.target.value;
+      const text = new TextDecoder().decode(value);
+      safeLog('Notified:', text);
+    }
+
+    function sendUARTRaw(bytes){
+      if(!writeChar){
+        safeLog('No write characteristic - cannot send');
+        microbitStatus.textContent = 'Not writable - reconnect or check micro:bit firmware';
+        microbitStatus.style.color = '#ff6b6b';
+        return Promise.reject(new Error('No write characteristic'));
+      }
+      return queueGattOperation(async () => {
+        try {
+          if(typeof writeChar.writeValue === 'function'){
+            await writeChar.writeValue(bytes);
+          } else if(typeof writeChar.writeValueWithoutResponse === 'function'){
+            await writeChar.writeValueWithoutResponse(bytes);
+          } else {
+            if(writeChar.properties && writeChar.properties.writeWithoutResponse && typeof writeChar.writeValue === 'function'){
+              await writeChar.writeValue(bytes);
+            } else {
+              throw new Error('No writable method on characteristic');
+            }
+          }
+          safeLog('Sent bytes', bytes);
+        } catch (err){
+          console.error('Write failed', err);
+          throw err;
+        }
+      });
+    }
+
+    async function sendToMicrobit(text){
+      if(!bleConnected || !writeChar){
+        safeLog('Skipped send - not connected or writable');
+        return;
+      }
+      try {
+        const payload = encoder.encode(String(text) + '\n');
+        await sendUARTRaw(payload);
+      } catch(e){
+        console.error('sendToMicrobit error', e);
+      }
+    }
+
+    connectMicrobitBtn.addEventListener('click', connectMicrobit);
+
+    /************************
+     * MediaPipe Hands setup (original)
+     ************************/
     const hands = new Hands({
       locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
     });
@@ -253,6 +485,9 @@
     }
     startCamera().catch((e)=>{ console.error('startCamera error', e); connStatus.textContent = 'Camera unavailable'; });
 
+    /***********************
+     * Finger counting + drawing (original)
+     ***********************/
     function countFingers(landmarks, handednessLabel){
       if (!landmarks || landmarks.length === 0) return 0;
       const tips = [4,8,12,16,20];
@@ -361,6 +596,7 @@
       return `${handCount},${typeChar},${fingerCount}`;
     }
 
+    // Main results handler: updates UI and sends payload to connected device (serial OR micro:bit)
     function onResults(results){
       drawResultsOnCanvas(results);
       const handsDetected = (results.multiHandLandmarks || []).length;
@@ -396,13 +632,42 @@
       if (lastSent !== payload){
         lastSent = payload;
         lastPayloadEl.textContent = payload;
-        if (serialConnected) sendSerialLine(payload);
+
+        // Send to whichever device is connected. Priority: serial (Arduino) if serialConnected is true,
+        // otherwise micro:bit if bleConnected is true.
+        if (serialConnected) {
+          sendSerialLine(payload);
+        } else if (bleConnected) {
+          // send to micro:bit (do not await)
+          sendToMicrobit(payload).catch(e=>console.warn('BLE send failed', e));
+        }
       }
     }
 
+    // ensure both devices are closed on page unload
     window.addEventListener('beforeunload', async () => {
       try { if (writer) { await writer.close(); writer = null; } if (port) { await port.close(); } } catch (e) {}
+      try { if (notifyChar && notifyChar.stopNotifications) await notifyChar.stopNotifications(); } catch(e){}
+      try { if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) bleDevice.gatt.disconnect(); } catch(e){}
     });
+
+    // When connection state changes from either side, update UI visibility
+    // (also helpful if user disconnects from device OS-side)
+    const stateMonitorInterval = setInterval(() => {
+      // if serial port present and readable/writable - keep serialConnected flag in sync is hard; skip deep checks
+      // for BLE, attempt to check gatt.connected
+      if (bleDevice && bleDevice.gatt) {
+        const nowBle = !!bleDevice.gatt.connected;
+        if (nowBle !== bleConnected) {
+          bleConnected = nowBle;
+          microbitStatus.style.display = bleConnected ? '' : 'none';
+          microbitStatus.textContent = bleConnected ? `Connected: ${bleDevice.name || 'micro:bit'}` : 'micro:bit: Not connected';
+          connectMicrobitBtn.textContent = bleConnected ? 'Disconnect' : 'Connect micro:bit';
+          updateButtonsVisibility();
+        }
+      }
+    }, 1500);
+
   </script>
 </body>
 </html>
