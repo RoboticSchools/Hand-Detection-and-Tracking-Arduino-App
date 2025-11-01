@@ -1,23 +1,29 @@
-# Hand Detection and Tracking — Arduino App
-
+# 🖐️ Hand Detection and Tracking — Arduino + Micro:Bit App  
 ### 🔗 Try the App  
-👉 [Open Live App](https://roboticschools.github.io/Hand-Detection-and-Tracking-Arduino-App/)
+👉 [**Open Live App**](https://roboticschools.github.io/Hand-Detection-and-Tracking-Arduino-Microbit-App/)  
 
 ---
 
 ## 📖 Overview  
-This project uses a **web-based hand tracking app** that detects hands and fingers using your computer’s camera.  
-The detected data is sent to **Arduino via Serial** for gesture-based control of LEDs, motors, or robots.  
+This project combines **AI-based hand tracking** with **Arduino** and **BBC Micro:Bit** to enable gesture-controlled robotics and electronics — all from your browser!  
+The app detects hands and fingers using your computer’s camera and sends the data in real time to **either Arduino (via Web Serial)** or **Micro:Bit (via Web Bluetooth)**.  
+No external software or installations needed — just open the link, connect your board, and start controlling your projects with hand gestures.  
 
-It’s simple — no extra software needed. Just open the link, connect your Arduino, and start controlling!
+---
+
+## ⚙️ Features  
+✅ Real-time hand and finger detection using **MediaPipe Hands**  
+✅ Works with both **Arduino** and **BBC Micro:Bit**  
+✅ Automatically hides the other board’s connect button once connected  
+✅ Sends live tracking data through **Serial (Arduino)** or **Bluetooth (Micro:Bit)**  
+✅ Simple payload format for easy integration with your own projects  
 
 ---
 
 ## 📡 Data Format  
+The app sends data in this format:  
 
-The app sends data in this format:
 <handCount>,<handType>,<fingerCount>
-
 
 | Field | Description | Example |
 |--------|--------------|----------|
@@ -26,39 +32,6 @@ The app sends data in this format:
 | `fingerCount` | Number of fingers up | `3` |
 
 **Example Message:**  
-`1,L,3` → 1 hand detected, Left hand, 3 fingers up
+1,L,3
 
----
-
-## 💻 Arduino Code
-```cpp
-String incomingData;
-int handCount;
-char handType;
-int fingerCount;
-
-void setup() {
-  Serial.begin(115200);
-}
-
-void loop() {
-  if (Serial.available()) {
-    incomingData = Serial.readStringUntil('\n');
-    incomingData.trim();
-    sscanf(incomingData.c_str(), "%d,%c,%d", &handCount, &handType, &fingerCount);
-
-    Serial.print("Hands: "); Serial.print(handCount);
-    Serial.print(" | Type: "); Serial.print(handType);
-    Serial.print(" | Fingers: "); Serial.println(fingerCount);
-  }
-}
-```
----
-
-## ⚙️ How to Use
-
-1. Open the web app using the link above.  
-2. Allow camera access in your browser.  
-3. Connect Arduino to your computer (**use 115200 baud**).  
-4. Open Serial Monitor and watch live hand tracking data.  
-5. Use the data to trigger LEDs, motors, or any custom logic.
+➡️ 1 hand detected, Left hand, 3 fingers up  
