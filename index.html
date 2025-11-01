@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hand Tracking — Arduino Interface</title>
+
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+
+  <style>
+    :root{
+      --bg: #0d0f12;
+      --panel: #0f1115;
+      --card: rgba(255,255,255,0.03);
+      --muted: #9fdfff;
+      --accent: linear-gradient(90deg,#00c3ff,#00ffa3);
+      --glass: rgba(255,255,255,0.03);
+      --radius: 14px;
+      --gap: 14px;
+      --fw-bold: 800;
+      --payload-color: #00e0ff;
+    }
+
+    *{box-sizing:border-box}
+    html,body{height:100%;margin:0;background:var(--bg);color:#eafcff;font-family:Inter,Segoe UI,Arial,sans-serif; -webkit-font-smoothing:antialiased; -moz-osx-font-smoothing:grayscale;}
+    a{color:inherit}
+
+    .container{max-width:1180px;margin:28px auto;padding:18px;display:grid;grid-template-columns:1fr 340px;gap:var(--gap);align-items:start}
+    header{grid-column:1/-1;display:flex;justify-content:space-between;align-items:center;gap:12px}
+    .title{display:flex;flex-direction:column;gap:4px}
+    h1{margin:0;font-size:20px;font-weight:var(--fw-bold)}
+    p.lead{margin:0;color:#9fdfff88;font-size:13px}
+
+    .controls{display:flex;gap:10px;align-items:center}
+    .btn{
+      padding:10px 14px;border-radius:12px;border:0;font-weight:700;cursor:pointer;
+      background:var(--glass); color: #dffcff; backdrop-filter: blur(6px);
+    }
+    .btn.primary{
+      background: var(--accent); color: #032022;
+      box-shadow: 0 6px 24px rgba(0,195,255,0.08), inset 0 -2px 0 rgba(0,0,0,0.12);
+    }
+    .status{
+      background:var(--card); padding:8px 10px;border-radius:10px;color:var(--muted);font-weight:700;font-size:13px;
+    }
+
+    .video-wrap{background:#000;border-radius:var(--radius);overflow:hidden;min-height:380px;display:flex;flex-direction:column}
+    .canvas-wrap{position:relative;width:100%;height:100%}
+    canvas#output{display:block;width:100%;height:auto;background:#000}
+    video#inputVideo{display:none}
+
+    aside.panel{display:flex;flex-direction:column;gap:12px}
+    .card{
+      background: linear-gradient(180deg, rgba(255,255,255,0.02), rgba(255,255,255,0.015));
+      padding:14px;border-radius:12px;border:1px solid rgba(255,255,255,0.02);
+      box-shadow: 0 6px 20px rgba(0,0,0,0.6);
+    }
+    .stat-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:10px}
+    .stat{
+      background:rgba(255,255,255,0.02);padding:12px;border-radius:10px;font-weight:800;display:flex;flex-direction:column;gap:6px;
+    }
+    .stat .label{font-size:12px;color:#bfefff}
+    .stat .value{font-size:18px}
+
+    .frame{
+      background: rgba(255,255,255,0.02);
+      border-radius:10px;padding:12px;backdrop-filter: blur(6px);
+    }
+    .mono{font-family:ui-monospace, SFMono-Regular, Menlo, Monaco, monospace; color:var(--payload-color); word-break:break-word; font-size:24px; font-weight:800; text-align:center;}
+
+    .small{font-size:12px;color:#9fdfff88}
+
+    @media (max-width:980px){
+      .container{grid-template-columns:1fr;padding:14px}
+      aside.panel{order:2}
+    }
+  </style>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js"></script>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="title">
+        <h1>Hand Tracking — Arduino Interface</h1>
+      </div>
+
+      <div class="controls" aria-hidden="false">
+        <button id="connectBtn" class="btn primary" title="Connect / Disconnect Arduino">Connect Arduino</button>
+        <div id="connStatus" class="status" role="status" aria-live="polite">Not connected</div>
+      </div>
+    </header>
+
+    <main class="video-wrap" aria-label="Camera preview and hand overlay">
+      <div class="canvas-wrap">
+        <canvas id="output" width="1280" height="720" aria-hidden="false"></canvas>
+        <video id="inputVideo" autoplay playsinline muted></video>
+      </div>
+    </main>
+
+    <aside class="panel" aria-label="Hand status panel">
+      <div class="card">
+        <div class="small" style="font-weight:800;margin-bottom:8px">Detection</div>
+        <div class="stat-grid">
+          <div class="stat frame">
+            <div class="label">Hands</div>
+            <div id="handsCount" class="value">0</div>
+          </div>
+
+          <div class="stat frame">
+            <div class="label">Type</div>
+            <div id="handsType" class="value">—</div>
+          </div>
+
+          <div class="stat frame" style="grid-column:1/-1">
+            <div class="label">Fingers (total)</div>
+            <div id="fingersCount" class="value">—</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card frame">
+        <div style="font-weight:800;margin-bottom:8px">Sent to Arduino</div>
+        <div id="lastPayload" class="mono">—</div>
+      </div>
+
+      <div class="card small">
+        <div><strong>Notes:</strong></div>
+        <ul style="margin:8px 0 0 16px;padding:0">
+          <li>Use Chrome/Edge for Web Serial support.</li>
+        </ul>
+      </div>
+    </aside>
+  </div>
+
+  <script>
+    const connectBtn = document.getElementById('connectBtn');
+    const connStatus = document.getElementById('connStatus');
+    const canvas = document.getElementById('output');
+    const videoEl = document.getElementById('inputVideo');
+    const handsCountEl = document.getElementById('handsCount');
+    const handsTypeEl = document.getElementById('handsType');
+    const fingersCountEl = document.getElementById('fingersCount');
+    const lastPayloadEl = document.getElementById('lastPayload');
+    const canvasCtx = canvas.getContext('2d', { alpha: false });
+
+    // Mirror preview for user (selfie). Set true to mirror — keeps visual UX familiar.
+    const MIRROR_PREVIEW = true;
+
+    let port = null;
+    let writer = null;
+    let serialConnected = false;
+    const encoder = new TextEncoder();
+    let writeQueue = Promise.resolve();
+    function queueOp(op){ writeQueue = writeQueue.then(op, op); return writeQueue; }
+
+    async function connectArduino(){
+      if (serialConnected) { await disconnectArduino(); return; }
+      if (!('serial' in navigator)) {
+        alert('Web Serial API not supported in this browser. Use Chrome or Edge.');
+        return;
+      }
+      try {
+        connectBtn.textContent = 'Requesting port...';
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: 115200 });
+        writer = port.writable.getWriter();
+        serialConnected = true;
+        connStatus.textContent = 'Connected';
+        connectBtn.textContent = 'Disconnect';
+        readLoop().catch(()=>{});
+      } catch (err) {
+        serialConnected = false;
+        connStatus.textContent = 'Not connected';
+        connectBtn.textContent = 'Connect Arduino';
+        alert('Failed to open serial port.');
+      }
+    }
+
+    async function disconnectArduino(){
+      connectBtn.textContent = 'Disconnecting...';
+      try { if (writer) { await writer.close(); writer.releaseLock(); writer = null; } } catch(e) {}
+      try { if (port) await port.close(); } catch(e) {}
+      port = null; serialConnected = false;
+      connStatus.textContent = 'Not connected';
+      connectBtn.textContent = 'Connect Arduino';
+    }
+
+    async function readLoop(){
+      if (!port || !port.readable) return;
+      const reader = port.readable.getReader();
+      try {
+        while (true) {
+          const { value, done } = await reader.read();
+          if (done) break;
+        }
+      } catch (e) {} finally { reader.releaseLock(); }
+    }
+
+    function sendSerialLine(line){
+      if (!serialConnected || !writer) return;
+      return queueOp(async () => {
+        try { await writer.write(encoder.encode(line + '\n')); } catch (e) {}
+      });
+    }
+
+    connectBtn.addEventListener('click', connectArduino);
+
+    const hands = new Hands({
+      locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+    });
+
+    hands.setOptions({
+      maxNumHands: 2,
+      modelComplexity: 1,
+      minDetectionConfidence: 0.6,
+      minTrackingConfidence: 0.5
+    });
+
+    hands.onResults(onResults);
+
+    let camera = null;
+    async function startCamera(){
+      try {
+        // Use MediaPipe Camera helper to manage permissions and frames
+        camera = new Camera(videoEl, {
+          onFrame: async () => { await hands.send({ image: videoEl }); },
+          width: 1280,
+          height: 720,
+          facingMode: 'user'
+        });
+        await camera.start();
+
+        // ensure canvas matches incoming video size
+        canvas.width = videoEl.videoWidth || 1280;
+        canvas.height = videoEl.videoHeight || 720;
+        connStatus.textContent = 'Camera ready';
+      } catch (err) {
+        console.error('Camera start failed:', err);
+        connStatus.textContent = 'Camera unavailable';
+      }
+    }
+    startCamera().catch((e)=>{ console.error('startCamera error', e); connStatus.textContent = 'Camera unavailable'; });
+
+    function countFingers(landmarks, handednessLabel){
+      if (!landmarks || landmarks.length === 0) return 0;
+      const tips = [4,8,12,16,20];
+      const pips = [2,6,10,14,18];
+      let cnt = 0;
+      for (let i = 1; i < 5; i++){
+        if (landmarks[tips[i]].y < landmarks[pips[i]].y - 0.01) cnt++;
+      }
+      const tipThumb = landmarks[4], ipThumb = landmarks[3];
+      if (handednessLabel){
+        const label = handednessLabel.toLowerCase();
+        if (label === 'right'){
+          if (tipThumb.x < ipThumb.x - 0.02) cnt++;
+        } else {
+          if (tipThumb.x > ipThumb.x + 0.02) cnt++;
+        }
+      } else {
+        if (Math.abs(tipThumb.x - ipThumb.x) > 0.04) cnt++;
+      }
+      return cnt;
+    }
+
+    function drawResultsOnCanvas(results){
+      const w = canvas.width, h = canvas.height;
+      canvasCtx.save();
+      canvasCtx.clearRect(0,0,w,h);
+
+      if (MIRROR_PREVIEW){
+        canvasCtx.translate(w,0);
+        canvasCtx.scale(-1,1);
+        canvasCtx.drawImage(videoEl, 0, 0, w, h);
+        canvasCtx.restore();
+
+        if (!results.multiHandLandmarks) return;
+        for (let i = 0; i < results.multiHandLandmarks.length; i++){
+          const lm = results.multiHandLandmarks[i];
+          const connections = [
+            [0,1],[1,2],[2,3],[3,4],
+            [0,5],[5,6],[6,7],[7,8],
+            [0,9],[9,10],[10,11],[11,12],
+            [0,13],[13,14],[14,15],[15,16],
+            [0,17],[17,18],[18,19],[19,20]
+          ];
+          canvasCtx.strokeStyle = 'rgba(0,255,204,0.95)';
+          canvasCtx.lineWidth = Math.max(1, Math.round(w / 640));
+          for (const [a,b] of connections){
+            const ax = w * (1 - lm[a].x), ay = h * lm[a].y;
+            const bx = w * (1 - lm[b].x), by = h * lm[b].y;
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(ax, ay);
+            canvasCtx.lineTo(bx, by);
+            canvasCtx.stroke();
+          }
+          canvasCtx.fillStyle = 'rgba(255,184,107,0.95)';
+          for (let j = 0; j < lm.length; j++){
+            const x = w * (1 - lm[j].x), y = h * lm[j].y;
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, Math.max(3, Math.round(w / 640) * 2), 0, Math.PI * 2);
+            canvasCtx.fill();
+          }
+        }
+      } else {
+        canvasCtx.drawImage(videoEl, 0, 0, w, h);
+        canvasCtx.restore();
+
+        if (!results.multiHandLandmarks) return;
+        for (let i = 0; i < results.multiHandLandmarks.length; i++){
+          const lm = results.multiHandLandmarks[i];
+          const connections = [
+            [0,1],[1,2],[2,3],[3,4],
+            [0,5],[5,6],[6,7],[7,8],
+            [0,9],[9,10],[10,11],[11,12],
+            [0,13],[13,14],[14,15],[15,16],
+            [0,17],[17,18],[18,19],[19,20]
+          ];
+          canvasCtx.strokeStyle = 'rgba(0,255,204,0.95)';
+          canvasCtx.lineWidth = Math.max(1, Math.round(w / 640));
+          for (const [a,b] of connections){
+            const ax = w * lm[a].x, ay = h * lm[a].y;
+            const bx = w * lm[b].x, by = h * lm[b].y;
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(ax, ay);
+            canvasCtx.lineTo(bx, by);
+            canvasCtx.stroke();
+          }
+          canvasCtx.fillStyle = 'rgba(255,184,107,0.95)';
+          for (let j = 0; j < lm.length; j++){
+            const x = w * lm[j].x, y = h * lm[j].y;
+            canvasCtx.beginPath();
+            canvasCtx.arc(x, y, Math.max(3, Math.round(w / 640) * 2), 0, Math.PI * 2);
+            canvasCtx.fill();
+          }
+        }
+      }
+    }
+
+    function flipLabel(label){
+      if (!label) return label;
+      if (label === 'Left') return 'Right';
+      if (label === 'Right') return 'Left';
+      return label;
+    }
+
+    let lastSent = null;
+    function buildPayloadCompact(handCount, typeChar, fingerCount){
+      return `${handCount},${typeChar},${fingerCount}`;
+    }
+
+    function onResults(results){
+      drawResultsOnCanvas(results);
+      const handsDetected = (results.multiHandLandmarks || []).length;
+      handsCountEl.textContent = handsDetected;
+      let typeChar = 'U';
+      let fingersTotal = 0;
+
+      if (handsDetected === 1){
+        // rawLabel is what MediaPipe reports (based on camera image coords)
+        const rawLabel = results.multiHandedness && results.multiHandedness[0] ? results.multiHandedness[0].label : null;
+        // For display (since preview is mirrored) flip the label so user sees correct Left/Right
+        const displayLabel = MIRROR_PREVIEW ? flipLabel(rawLabel) : rawLabel;
+        const labelChar = displayLabel ? displayLabel.charAt(0).toUpperCase() : 'U';
+        typeChar = (labelChar === 'L' || labelChar === 'R') ? labelChar : 'U';
+        // For finger counting, pass the rawLabel (don't flip) because landmarks coordinates are non-mirrored
+        fingersTotal = countFingers(results.multiHandLandmarks[0], rawLabel);
+      } else if (handsDetected === 2){
+        typeChar = 'B';
+        for (let i = 0; i < 2; i++){
+          const rawLabel = results.multiHandedness && results.multiHandedness[i] ? results.multiHandedness[i].label : null;
+          fingersTotal += countFingers(results.multiHandLandmarks[i], rawLabel);
+        }
+      } else {
+        typeChar = 'N';
+        fingersTotal = 0;
+      }
+
+      const typeText = typeChar === 'B' ? 'Both' : (typeChar === 'N' ? 'None' : (typeChar === 'U' ? 'Unknown' : (typeChar === 'L' ? 'Left' : 'Right')));
+      handsTypeEl.textContent = typeText;
+      fingersCountEl.textContent = fingersTotal;
+
+      const payload = buildPayloadCompact(handsDetected, typeChar, fingersTotal);
+      if (lastSent !== payload){
+        lastSent = payload;
+        lastPayloadEl.textContent = payload;
+        if (serialConnected) sendSerialLine(payload);
+      }
+    }
+
+    window.addEventListener('beforeunload', async () => {
+      try { if (writer) { await writer.close(); writer = null; } if (port) { await port.close(); } } catch (e) {}
+    });
+  </script>
+</body>
+</html>
