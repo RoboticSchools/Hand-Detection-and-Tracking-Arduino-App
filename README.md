@@ -52,7 +52,7 @@ void loop() {
     Serial.print(" | Fingers: "); Serial.println(fingerCount);
   }
 }
-
+```
 ---
 
 ## ⚙️ How to Use
