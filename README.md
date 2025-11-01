@@ -1,4 +1,4 @@
-# 🖐️ Hand Detection and Tracking - Arduino + Micro:Bit App  
+# Hand Detection and Tracking - Arduino + Micro:Bit App  
 ### 🔗 Try the App  
 👉 [**Open Live App**](https://roboticschools.github.io/Hand-Detection-and-Tracking-App/)  
 
