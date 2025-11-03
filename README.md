@@ -2,7 +2,7 @@
 
 [Open in MakeCode Editor](https://makecode.microbit.org/_TYEayHArWU2o)
 
-<img width="400" height="300" alt="image" src="https://github.com/user-attachments/assets/3ed6b043-e75c-47f5-897a-0fe959293337" />
+<img width="600" height="400" alt="image" src="https://github.com/user-attachments/assets/3ed6b043-e75c-47f5-897a-0fe959293337" />
 
 ---
 
